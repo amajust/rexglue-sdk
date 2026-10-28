@@ -376,6 +376,59 @@ X_RESULT MnkInputDriver::GetDeviceKeystroke(DeviceId id, uint32_t flags,
   }
   std::lock_guard lock(state_mutex_);
   if (keystroke_queue_.empty()) {
+    // PARCHE LOCAL - teclado: nadie llamaba a EnqueueKeystroke, asi que la cola
+    // de XInputGetKeystroke estaba siempre vacia y los menus (que leen por
+    // ahi, no por XInputGetState) no veian ninguna tecla. Aqui se comparan los
+    // botones de ahora con los de la ultima vez y se encola un evento por
+    // cambio: primero los que se sueltan, luego los que se pulsan.
+    static uint64_t botones_previos = 0;  // un solo dispositivo; bajo state_mutex_
+    struct Boton {
+      std::string asignacion;
+      VirtualKey vk;
+    };
+    const Boton botones[] = {
+        {REXCVAR_GET(keybind_dpad_up), VirtualKey::kXInputPadDpadUp},
+        {REXCVAR_GET(keybind_dpad_down), VirtualKey::kXInputPadDpadDown},
+        {REXCVAR_GET(keybind_dpad_left), VirtualKey::kXInputPadDpadLeft},
+        {REXCVAR_GET(keybind_dpad_right), VirtualKey::kXInputPadDpadRight},
+        {REXCVAR_GET(keybind_start), VirtualKey::kXInputPadStart},
+        {REXCVAR_GET(keybind_back), VirtualKey::kXInputPadBack},
+        {REXCVAR_GET(keybind_lstick_press), VirtualKey::kXInputPadLThumbPress},
+        {REXCVAR_GET(keybind_rstick_press), VirtualKey::kXInputPadRThumbPress},
+        {REXCVAR_GET(keybind_left_shoulder), VirtualKey::kXInputPadLShoulder},
+        {REXCVAR_GET(keybind_right_shoulder), VirtualKey::kXInputPadRShoulder},
+        {REXCVAR_GET(keybind_a), VirtualKey::kXInputPadA},
+        {REXCVAR_GET(keybind_b), VirtualKey::kXInputPadB},
+        {REXCVAR_GET(keybind_x), VirtualKey::kXInputPadX},
+        {REXCVAR_GET(keybind_y), VirtualKey::kXInputPadY},
+        {REXCVAR_GET(keybind_left_trigger), VirtualKey::kXInputPadLTrigger},
+        {REXCVAR_GET(keybind_right_trigger), VirtualKey::kXInputPadRTrigger},
+        {REXCVAR_GET(keybind_lstick_up), VirtualKey::kXInputPadLThumbUp},
+        {REXCVAR_GET(keybind_lstick_down), VirtualKey::kXInputPadLThumbDown},
+        {REXCVAR_GET(keybind_lstick_right), VirtualKey::kXInputPadLThumbRight},
+        {REXCVAR_GET(keybind_lstick_left), VirtualKey::kXInputPadLThumbLeft},
+    };
+    uint64_t ahora = 0;
+    if (is_active() && has_focus_) {
+      for (size_t i = 0; i < std::size(botones); ++i) {
+        if (IsBindPressed(key_down_, botones[i].asignacion)) {
+          ahora |= uint64_t(1) << i;
+        }
+      }
+    }
+    const uint64_t cambiados = ahora ^ botones_previos;
+    for (int pasada = 0; pasada < 2; ++pasada) {
+      const bool pulsados = pasada == 1;
+      for (size_t i = 0; i < std::size(botones); ++i) {
+        const uint64_t bit = uint64_t(1) << i;
+        if ((cambiados & bit) && ((ahora & bit) != 0) == pulsados) {
+          EnqueueKeystroke(static_cast<uint16_t>(botones[i].vk), pulsados);
+        }
+      }
+    }
+    botones_previos = ahora;
+  }
+  if (keystroke_queue_.empty()) {
     return X_ERROR_EMPTY;
   }
   if (out_keystroke) {

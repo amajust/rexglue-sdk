@@ -23,6 +23,11 @@
 #include <rex/system/function_dispatcher.h>
 #include <rex/system/thread_state.h>
 
+#include <cstdlib>
+#include <cstdio>
+#include <mutex>
+#include <unordered_set>
+
 namespace rex::runtime {
 
 namespace {
@@ -39,6 +44,14 @@ static void InvalidFunctionTrap(PPCContext& ctx, uint8_t* /*base*/) {
             ctx.last_indirect_target);
 }
 
+// Survey stub: does nothing, just returns. Only reached with REXGLUE_SURVEY=1.
+static void SurveyStub(PPCContext& /*ctx*/, uint8_t* /*base*/) {}
+
+// REXGLUE_SURVEY=1: instead of dying on the first unregistered indirect call,
+// log each unique target once and return a stub, so one run collects every
+// address the static analysis missed. The guest state goes nonsense after the
+// first stub, but the log is what matters. Same idea as the NFSMW project's
+// "sondeo completo" (see its app/overrides.toml).
 PPCFunc* ResolveIndirectFunction(uint32_t guest_address) {
   FunctionDispatcher* dispatcher = GetBoundFunctionDispatcher();
   if (!dispatcher) {
@@ -47,6 +60,23 @@ PPCFunc* ResolveIndirectFunction(uint32_t guest_address) {
 
   if (PPCFunc* func = dispatcher->GetFunction(guest_address)) {
     return func;
+  }
+
+  static const bool survey_enabled = std::getenv("REXGLUE_SURVEY") != nullptr;
+  if (survey_enabled) {
+    static std::mutex survey_mutex;
+    static std::unordered_set<uint32_t> survey_seen;
+    std::lock_guard<std::mutex> lock(survey_mutex);
+    if (survey_seen.insert(guest_address).second) {
+      REXLOG_WARN("SURVEY unregistered indirect target 0x{:08X}", guest_address);
+      // A fichero dedicado: el log principal rota (el spam de violaciones de
+      // acceso lo come) y las lineas SURVEY se pierden. Este fichero no rota.
+      if (FILE* f = std::fopen("survey_targets.txt", "a")) {
+        std::fprintf(f, "0x%08X\n", guest_address);
+        std::fclose(f);
+      }
+    }
+    return &SurveyStub;
   }
 
   return &InvalidFunctionTrap;
