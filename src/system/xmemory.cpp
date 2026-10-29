@@ -558,14 +558,54 @@ bool Memory::AccessViolationCallback(std::unique_lock<std::recursive_mutex> glob
     // Rate-limited: a stuck guest can repeat this thousands of times per
     // second and rotate the whole log away (seen on Android).
     static std::atomic<uint32_t> unhandled_count{0};
+    static std::atomic<uint64_t> repaired_count{0};
     const uint32_t n = unhandled_count.fetch_add(1, std::memory_order_relaxed);
+
+    // Diagnostics + recovery for guest VIRTUAL heaps (0x40000000-0x7FFFFFFF
+    // on the Xbox 360). Those pages are committed lazily; if the guest writes
+    // to a page the heap thinks is committed, the fault is just stale host
+    // protection and can be repaired. If the page was never committed, that is
+    // a real guest bug — but log everything needed to tell them apart.
+    if (heap) {
+      HeapAllocationInfo info{};
+      const bool have_info = heap->QueryRegionInfo(virtual_address, &info);
+      if (n < 8) {
+        uint32_t prot = 0;
+        const bool have_prot = heap->QueryProtect(virtual_address, &prot);
+        REXSYS_ERROR(
+            "Guest virtual AV: guest 0x{:08X} write={} heap={} base=0x{:08X} size=0x{:08X} "
+            "info={} state=0x{:08X} alloc_protect=0x{:08X} prot={} 0x{:08X}",
+            virtual_address, is_write, static_cast<int>(heap->heap_type()), heap->heap_base(),
+            heap->heap_size(), have_info, have_info ? info.state : 0,
+            have_info ? info.allocation_protect : 0, have_prot, prot);
+      }
+      // The guest metadata is the source of truth: when it says the page is
+      // committed and writable, the host protection is simply stale, so
+      // restore it and carry on (this is what the physical-heap recovery path
+      // already does). Any number of pages may need it.
+      if (have_info && (info.state & memory::kMemoryAllocationCommit) && is_write) {
+        size_t host_page_size = rex::memory::page_size();
+        uintptr_t page_base =
+            reinterpret_cast<uintptr_t>(host_address) & ~(uintptr_t(host_page_size - 1));
+        if (rex::memory::Protect(reinterpret_cast<void*>(page_base), host_page_size,
+                                 rex::memory::PageAccess::kReadWrite, nullptr)) {
+          repaired_count.fetch_add(1, std::memory_order_relaxed);
+          if (n < 8) {
+            REXSYS_WARN("  repaired stale host protection for guest {:08X}", virtual_address);
+          }
+          return true;
+        }
+      }
+    }
+
     if (n < 8) {
       REXSYS_ERROR(
           "Unhandled guest access violation: {} of guest 0x{:08X} (host 0x{:016X}) on thread 0x{:X}",
           is_write ? "write" : "read", virtual_address, reinterpret_cast<uintptr_t>(host_address),
           rex::thread::current_thread_id());
     } else if (n == 8) {
-      REXSYS_ERROR("Further unhandled guest access violations will not be logged");
+      REXSYS_ERROR("Further unhandled guest access violations will not be logged (repaired so far: {})",
+                     repaired_count.load(std::memory_order_relaxed));
     }
     return false;
   }
