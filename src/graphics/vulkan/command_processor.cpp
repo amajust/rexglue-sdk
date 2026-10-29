@@ -931,10 +931,14 @@ bool VulkanCommandProcessor::SetupContext() {
     return false;
   }
   if (!device_properties.vertexPipelineStoresAndAtomics) {
-    REXGPU_ERROR(
-        "Vulkan vertexPipelineStoresAndAtomics is required for GPU emulation and "
-        "D3D12 parity, but unsupported by the selected device");
-    return false;
+    // Mali (and other mobile GPUs) lack this. The command processor already
+    // has a compute-shader fallback for vertex-stage memory export, and that
+    // is only needed by titles that use memexport (rare). Let the device
+    // through; a draw that genuinely needs it fails on its own with a clear
+    // error instead of blocking the whole game.
+    REXGPU_WARN(
+        "Vulkan vertexPipelineStoresAndAtomics is unsupported by the selected device; "
+        "continuing with the compute-shader fallback (vertex memexport draws may fail)");
   }
   if (!device_properties.geometryShader) {
     if (REXCVAR_GET(vulkan_require_geometry_shader)) {

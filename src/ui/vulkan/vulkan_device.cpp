@@ -117,11 +117,12 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
       return nullptr;
     }
     if (!supported_features.vertexPipelineStoresAndAtomics) {
+      // Mobile GPUs (Mali) lack this. The renderer has a compute-shader
+      // fallback for vertex-stage memory export; only memexport draws need it.
       REXLOG_WARN(
-          "Vulkan device '{}' doesn't support vertexPipelineStoresAndAtomics, which "
-          "is required for Vulkan GPU emulation parity",
+          "Vulkan device '{}' doesn't support vertexPipelineStoresAndAtomics; "
+          "continuing with the compute-shader fallback",
           properties.deviceName);
-      return nullptr;
     }
     if (REXCVAR_GET(vulkan_require_geometry_shader) && !supported_features.geometryShader) {
       REXLOG_WARN(

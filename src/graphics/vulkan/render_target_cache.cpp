@@ -406,11 +406,15 @@ bool VulkanRenderTargetCache::Initialize(uint32_t shared_memory_binding_count) {
           "interlock path for D3D12 parity");
       path_ = Path::kPixelShaderInterlock;
     } else {
-      REXGPU_ERROR(
-          "VulkanRenderTargetCache: Bit-exact host render target ownership "
-          "transfers require UINT transfer formats and integer sampled-image "
-          "MSAA support, and fragment shader interlock fallback is unavailable");
-      return false;
+      // Mobile GPUs (Mali) can't do bit-exact host-owned render target
+      // transfers and have no fragment shader interlock fallback. Continue
+      // with the host render target path anyway: it was the standard Xenia
+      // path for years and the artefacts, if any, are visual only.
+      REXGPU_WARN(
+          "VulkanRenderTargetCache: bit-exact host render target ownership "
+          "transfers unsupported (no UINT transfer formats / integer MSAA, no "
+          "fragment shader interlock); continuing with the host render target "
+          "path, some effects may render imprecisely");
     }
   }
 
