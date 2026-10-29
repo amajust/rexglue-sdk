@@ -75,7 +75,22 @@ std::unique_ptr<VulkanInstance> VulkanInstance::Create(const bool with_surface,
     return nullptr;
   }
 #else
-  loader_loaded = vulkan_instance->loader_.Load(platform::lib_names::kVulkanLoader);
+  // An explicit loader path wins: lets an app ship its own Vulkan loader (for
+  // example a shim forwarding to a custom Vulkan driver) in its lib folder,
+  // which dlopen("libvulkan.so") alone would not reach because the system one
+  // resolves first.
+  const char* explicit_loader = std::getenv("GEARS_VULKAN_LOADER");
+  if (explicit_loader && *explicit_loader) {
+    loader_loaded = vulkan_instance->loader_.Load(explicit_loader);
+    if (loader_loaded) {
+      REXLOG_INFO("Loaded Vulkan runtime from {}", explicit_loader);
+    } else {
+      REXLOG_WARN("GEARS_VULKAN_LOADER set but {} could not be loaded", explicit_loader);
+    }
+  }
+  if (!loader_loaded) {
+    loader_loaded = vulkan_instance->loader_.Load(platform::lib_names::kVulkanLoader);
+  }
   if (!loader_loaded) {
     REXLOG_ERROR("Failed to load {}", platform::lib_names::kVulkanLoader);
     return nullptr;

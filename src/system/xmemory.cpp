@@ -10,6 +10,7 @@
  */
 
 #include <algorithm>
+#include <atomic>
 #include <cstring>
 #include <utility>
 
@@ -554,10 +555,18 @@ bool Memory::AccessViolationCallback(std::unique_lock<std::recursive_mutex> glob
   uint32_t virtual_address = HostToGuestVirtual(host_address);
   BaseHeap* heap = LookupHeap(virtual_address);
   if (!heap || heap->heap_type() != memory::HeapType::kGuestPhysical) {
-    REXSYS_ERROR(
-        "Unhandled guest access violation: {} of guest 0x{:08X} (host 0x{:016X}) on thread 0x{:X}",
-        is_write ? "write" : "read", virtual_address, reinterpret_cast<uintptr_t>(host_address),
-        rex::thread::current_thread_id());
+    // Rate-limited: a stuck guest can repeat this thousands of times per
+    // second and rotate the whole log away (seen on Android).
+    static std::atomic<uint32_t> unhandled_count{0};
+    const uint32_t n = unhandled_count.fetch_add(1, std::memory_order_relaxed);
+    if (n < 8) {
+      REXSYS_ERROR(
+          "Unhandled guest access violation: {} of guest 0x{:08X} (host 0x{:016X}) on thread 0x{:X}",
+          is_write ? "write" : "read", virtual_address, reinterpret_cast<uintptr_t>(host_address),
+          rex::thread::current_thread_id());
+    } else if (n == 8) {
+      REXSYS_ERROR("Further unhandled guest access violations will not be logged");
+    }
     return false;
   }
 
