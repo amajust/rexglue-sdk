@@ -54,8 +54,8 @@ if(WIN32)
     )
     target_compile_definitions(rexcore PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN)
 elseif(UNIX)
-    # Linux and macOS/Darwin share the POSIX sources; Darwin-specific behavior
-    # is selected inside them with #if defined(__APPLE__).
+    # Linux, macOS/Darwin and Android share the POSIX sources; OS-specific
+    # behavior is selected inside them via REX_PLATFORM_* / __ANDROID__.
     target_sources(rexcore PRIVATE
         atomic_posix.cpp
         clock_posix.cpp
@@ -74,6 +74,15 @@ elseif(UNIX)
         system_posix.cpp
         threading_posix.cpp
     )
+    if(ANDROID)
+        # Android glue: GetAndroidApiLevel, filesystem/system AndroidInitialize
+        # implementations and the ContentResolver fd bridge. Body is fully
+        # guarded by REX_PLATFORM_ANDROID (no-op on other platforms).
+        target_sources(rexcore PRIVATE android_runtime.cpp)
+        # Bionic has ucontext_t but not the ucontext API functions; provide
+        # them (aarch64) so fiber_posix.cpp works unmodified.
+        target_sources(rexcore PRIVATE ucontext_android.cpp)
+    endif()
 endif()
 
 # Xenos data-format layer (stateless; headers under include/rex/graphics/).
@@ -100,6 +109,10 @@ target_include_directories(rexcore PRIVATE
 
 if(APPLE)
     target_link_libraries(rexcore PRIVATE pthread)
+elseif(ANDROID)
+    # bionic: pthread lives in libc and there is no librt. dl is a real
+    # (stub-capable) library; log is needed by Android glue code.
+    target_link_libraries(rexcore PRIVATE dl log)
 elseif(UNIX)
     target_link_libraries(rexcore PRIVATE pthread rt dl)
 endif()

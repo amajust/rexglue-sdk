@@ -79,8 +79,16 @@ struct LogConfig {
   /** spdlog pattern string for the file sink. */
   std::string file_pattern = "[%Y-%m-%d %H:%M:%S.%e] [%l] [%n] [t%t] %v";
 
-  /** Messages at or above this level trigger an immediate flush. */
-  spdlog::level::level_enum flush_level = spdlog::level::info;
+  /**
+   * Messages at or above this level trigger an immediate flush.
+   *
+   * Defaults to warn (not info): flushing on every info message performs a
+   * synchronous write per log line, which is especially expensive on Android
+   * where the log file lives on FUSE-backed shared storage and loggers run on
+   * the main game thread. Warnings and errors are still flushed immediately;
+   * info lines are written by the periodic flush / on close.
+   */
+  spdlog::level::level_enum flush_level = spdlog::level::warn;
 
   /**
    * Per-category log level overrides.

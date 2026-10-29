@@ -29,6 +29,9 @@
 
 #if REX_PLATFORM_WIN32
 #include <spdlog/sinks/msvc_sink.h>
+#elif REX_PLATFORM_ANDROID
+#include <android/log.h>
+#include <spdlog/sinks/base_sink.h>
 #else
 #include <spdlog/sinks/stdout_sinks.h>
 #endif
@@ -69,6 +72,48 @@ bool g_early_initialized = false;
 bool g_initialized = false;
 std::mutex g_mutex;
 LogConfig g_config;
+
+#if REX_PLATFORM_ANDROID
+// Routes every REXLOG line to the Android logcat (visible via adb logcat or
+// any on-device log-capture app). Used as the early sink AND kept for the
+// whole session: stdout is invisible for Android apps, so this sink is the
+// only live channel until (and besides) the file sink.
+class AndroidLogSinkMt final : public spdlog::sinks::base_sink<std::mutex> {
+ protected:
+  void sink_it_(const spdlog::details::log_msg& msg) override {
+    spdlog::memory_buf_t formatted;
+    base_sink<std::mutex>::formatter_->format(msg, formatted);
+    android_LogPriority priority;
+    switch (msg.level) {
+      case spdlog::level::trace:
+      case spdlog::level::debug:
+        priority = ANDROID_LOG_DEBUG;
+        break;
+      case spdlog::level::warn:
+        priority = ANDROID_LOG_WARN;
+        break;
+      case spdlog::level::err:
+        priority = ANDROID_LOG_ERROR;
+        break;
+      case spdlog::level::critical:
+      case spdlog::level::off:
+        priority = ANDROID_LOG_FATAL;
+        break;
+      default:
+        priority = ANDROID_LOG_INFO;
+        break;
+    }
+    // Trim trailing newlines so logcat does not render blank lines.
+    std::string_view text(formatted.data(), formatted.size());
+    while (!text.empty() && (text.back() == '\n' || text.back() == '\r'))
+      text.remove_suffix(1);
+    __android_log_print(priority, "dantes_inferno", "%.*s",
+                        static_cast<int>(text.size()), text.data());
+  }
+
+  void flush_() override {}
+};
+#endif  // REX_PLATFORM_ANDROID
 
 std::filesystem::path NextSequentialLogPath(const std::filesystem::path& logs_dir,
                                             std::string_view app_name) {
@@ -150,6 +195,8 @@ void InitLoggingEarly() {
 
 #if REX_PLATFORM_WIN32
   auto sink = std::make_shared<spdlog::sinks::msvc_sink_mt>();
+#elif REX_PLATFORM_ANDROID
+  auto sink = std::make_shared<AndroidLogSinkMt>();
 #else
   auto sink = std::make_shared<spdlog::sinks::stdout_sink_mt>();
 #endif
@@ -196,9 +243,12 @@ void InitLogging(const LogConfig& config) {
   // Early sink handling:
   //   Windows: the early msvc_sink is the persistent debug channel for GUI
   //     apps and does not conflict with the stdout console sink, so keep it.
-  //   Non-Windows: drop the early stdout sink unconditionally so file-only
-  //     configs don't leak to stdout and console configs don't duplicate.
-#if !REX_PLATFORM_WIN32
+  //   Android: the early logcat sink is the persistent debug channel (stdout
+  //     is invisible for apps), so keep it alongside the file sink.
+  //   Other non-Windows: drop the early stdout sink unconditionally so
+  //     file-only configs don't leak to stdout and console configs don't
+  //     duplicate.
+#if !REX_PLATFORM_WIN32 && !REX_PLATFORM_ANDROID
   if (g_early_sink) {
     for (auto& entry : g_registry) {
       if (entry.logger)

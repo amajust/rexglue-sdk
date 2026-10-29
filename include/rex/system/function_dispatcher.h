@@ -154,6 +154,11 @@ class FunctionDispatcher : public IModuleRegistrar {
 
   // Protects dispatcher metadata during module registration and callback dispatch.
   mutable std::recursive_mutex dispatch_mutex_;
+
+  // Serializes interrupt dispatches among themselves (vblank thread, GPU
+  // thread PM4_INTERRUPT, timer DPCs) without holding the global critical
+  // region while guest callback code runs. See ExecuteInterrupt.
+  std::mutex interrupt_dispatch_mutex_;
 };
 
 }  // namespace rex::runtime

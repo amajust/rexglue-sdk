@@ -23,6 +23,8 @@ option(REXGLUE_ENABLE_SANITIZERS "Enable UndefinedBehaviorSanitizer" OFF)
 option(REXGLUE_ENABLE_FIDELITYFX "Enable optional AMD FidelityFX integration (experimental)" OFF)
 option(REXGLUE_ENABLE_TRACY                "Enable Tracy profiler integration" ON)
 option(REXGLUE_ENABLE_PERF_COUNTERS        "Enable lightweight perf counter registry and overlay" ON)
+option(REXGLUE_ENABLE_DESKTOP_SDL_BACKENDS
+       "Build SDL3 desktop video/audio backends (X11/Wayland/ALSA/Pulse). Turn OFF for headless CLI-only builds." ON)
 # Propagate profiling defines globally (compiled out in Release)
 if(REXGLUE_ENABLE_TRACY)
     add_compile_definitions($<$<NOT:$<CONFIG:Release>>:REXGLUE_ENABLE_PROFILING>)
@@ -139,6 +141,13 @@ add_compile_options(
     -fno-char8_t
 )
 
+# src/core/memory.cpp uses SSSE3 shuffle intrinsics directly (x86 byte-swap
+# fast paths). Consumers normally add these flags themselves; add them here so
+# a standalone SDK build (rexglue CLI) compiles out of the box.
+if(NOT MSVC AND CMAKE_SYSTEM_PROCESSOR MATCHES "AMD64|x86_64")
+    add_compile_options(-mssse3 -msse4.1)
+endif()
+
 # Platform detection (supports AMD64 and ARM64)
 set(REX_TARGET_PROCESSOR "${CMAKE_SYSTEM_PROCESSOR}")
 if(APPLE AND CMAKE_OSX_ARCHITECTURES)
@@ -158,6 +167,17 @@ if(WIN32)
         message(FATAL_ERROR "Unsupported Windows architecture: ${REX_TARGET_PROCESSOR}")
     endif()
     add_compile_definitions(REX_PLATFORM_WINDOWS=1)
+elseif(ANDROID)
+    # Android (NDK toolchain). arm64-v8a only: the recompiled guest code, the
+    # Vulkan backend and the FFmpeg NEON paths are all arm64-first.
+    if(NOT REX_TARGET_PROCESSOR MATCHES "aarch64|ARM64|arm64")
+        message(FATAL_ERROR
+            "ReXGlue Android builds support arm64-v8a only (found: ${REX_TARGET_PROCESSOR})")
+    endif()
+    set(REX_PLATFORM "android-arm64")
+    # REX_PLATFORM_LINUX=1 keeps the POSIX backend selection (bionic) working;
+    # REX_PLATFORM_ANDROID unlocks the Android-specific glue (see platform.h).
+    add_compile_definitions(REX_PLATFORM_ANDROID=1 REX_PLATFORM_LINUX=1)
 elseif(UNIX AND NOT APPLE)
     if(REX_TARGET_PROCESSOR MATCHES "AMD64|x86_64")
         set(REX_PLATFORM "linux-amd64")
@@ -177,7 +197,7 @@ elseif(APPLE)
     endif()
     add_compile_definitions(REX_PLATFORM_MAC=1)
 else()
-    message(FATAL_ERROR "Unsupported platform. ReXGlue supports Windows, Linux, and macOS only.")
+    message(FATAL_ERROR "Unsupported platform. ReXGlue supports Windows, Linux, macOS, and Android (arm64-v8a).")
 endif()
 
 # Build config as compile definition (multi-config generators don't know config at configure time)

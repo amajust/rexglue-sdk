@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <cstring>
 #include <iterator>
@@ -4044,6 +4045,23 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t 
         std::max(memexport_extent_end, memexport_range_base_bytes + memexport_range.size_bytes);
   }
   if (memexport_writes_possible && memexport_ranges_.empty()) {
+    // Diagnostic: this conservative path makes the full 512 MB shared memory
+    // resident, inserts a whole-buffer barrier for the draw and, after the
+    // draw, invalidates every watched texture and re-protects every page.
+    // A title hitting this every draw collapses to ~1 FPS on mobile-class
+    // memory bandwidth. It is silent in upstream logs, so emit a throttled
+    // warning to make its incidence measurable.
+    static std::atomic<uint32_t> unresolved_memexport_draw_count{0};
+    const uint32_t unresolved_draw_index =
+        unresolved_memexport_draw_count.fetch_add(1, std::memory_order_relaxed);
+    if ((unresolved_draw_index % 60) == 0) {
+      REXGPU_WARN(
+          "Draw #{} with memexport-capable shader but unresolved export "
+          "destinations: using the full {} MiB shared memory range (resident "
+          "request, whole-buffer barrier, global texture invalidation). If "
+          "frame rate is low, this path is a likely cause.",
+          unresolved_draw_index, uint32_t(SharedMemory::kBufferSize >> 20));
+    }
     if (!shared_memory_->RequestRange(0, SharedMemory::kBufferSize)) {
       REXGPU_ERROR(
           "Failed to request full shared memory residency for unresolved "

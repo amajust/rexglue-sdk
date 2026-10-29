@@ -31,20 +31,22 @@ bool build_attn(BuilderContext& ctx) {
 }
 
 bool build_sync(BuilderContext& ctx) {
-  // Memory barrier, x86 has strong ordering so this is a no-op
-  (void)ctx;
+  // Full PPC memory barrier. A no-op on x86-TSO, but weakly-ordered targets
+  // (ARM64/Android) need a real fence for inter-thread visibility, so always
+  // emit the fence (seq_cst on x86 costs a few cycles per hit).
+  ctx.println("\tREX_SYNC_FENCE();");
   return true;
 }
 
 bool build_lwsync(BuilderContext& ctx) {
-  // Lightweight memory barrier, x86 has strong ordering so this is a no-op
-  (void)ctx;
+  // Lightweight sync: orders loads/stores except store-load. acq_rel fence.
+  ctx.println("\tREX_LWSYNC_FENCE();");
   return true;
 }
 
 bool build_eieio(BuilderContext& ctx) {
-  // Enforce in-order execution of I/O, x86 has strong ordering so this is a no-op
-  (void)ctx;
+  // Enforce in-order execution of I/O (store-store ordering). Release fence.
+  ctx.println("\tREX_EIEIO_FENCE();");
   return true;
 }
 

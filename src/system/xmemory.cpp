@@ -43,6 +43,13 @@ REXCVAR_DEFINE_BOOL(scribble_heap, false, "Memory", "Scribble 0xCD into all allo
 
 namespace rex::memory {
 
+// Host address offset applied to guest addresses >= 0xE0000000 when the host
+// page granularity forces a 4 KB skew of the vE0000000 physical heap view.
+// Published for the generated code's REX_PHYS_HOST_OFFSET macro (see the
+// codegen pch template); zero on 4 KB-page hosts (most Linux/Android boxes).
+// Windows and macOS ARM64 keep their compile-time constant in the template.
+uint32_t g_guest_phys_host_offset = 0;
+
 uint32_t get_page_count(uint32_t value, uint32_t page_size, uint32_t page_size_shift) {
   return rex::round_up(value, page_size) >> page_size_shift;
 }
@@ -200,6 +207,10 @@ bool Memory::Initialize() {
                               0x20000000, 16 * 1024 * 1024, &heaps_.physical);
   heaps_.vE0000000.Initialize(this, virtual_membase_, memory::HeapType::kGuestPhysical, 0xE0000000,
                               0x1FD00000, 4096, &heaps_.physical);
+
+  // Publish the 0xE0000000 heap's host offset so the generated code's
+  // REX_PHYS_HOST_OFFSET macro stays in sync with the runtime's view mapping.
+  g_guest_phys_host_offset = heaps_.vE0000000.host_address_offset();
 
   // Protect the first and last 64kb of memory.
   heaps_.v00000000.AllocFixed(0x00000000, 0x10000, 0x10000,

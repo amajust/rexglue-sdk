@@ -72,6 +72,10 @@ elseif(APPLE)
     set(REXUI_PLATFORM_SOURCES
         surface_mac.cpp
     )
+elseif(ANDROID)
+    set(REXUI_PLATFORM_SOURCES
+        surface_android.cpp
+    )
 else()
     set(REXUI_PLATFORM_SOURCES
         surface_gnulinux.cpp
@@ -146,7 +150,7 @@ if(REXGLUE_USE_VULKAN)
 endif()
 
 # Platform-specific dependencies
-if(UNIX AND NOT APPLE)
+if(UNIX AND NOT APPLE AND NOT ANDROID)
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(X11_XCB REQUIRED x11-xcb)
     # Required, not optional: vulkan/api.h pulls in <wayland-client.h> on every
@@ -161,6 +165,9 @@ if(UNIX AND NOT APPLE)
         ${X11_XCB_LIBRARIES}
         ${WAYLAND_LIBRARIES}
     )
+elseif(ANDROID)
+    # ANativeWindow query (surface_android.cpp) lives in libandroid.
+    target_link_libraries(rexui PUBLIC android log)
 elseif(APPLE)
     target_link_libraries(rexui PRIVATE "-framework CoreFoundation")
 endif()

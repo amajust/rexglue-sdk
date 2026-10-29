@@ -127,8 +127,24 @@ extern PPCFuncMapping PPCFuncMappings[];
 #if REX_PLATFORM_WIN32 || (REX_PLATFORM_MAC && REX_ARCH_ARM64)
 #define REX_PHYS_HOST_OFFSET(addr) (((u32)(addr) >= 0xE0000000u) ? 0x1000u : 0u)
 #else
-#define REX_PHYS_HOST_OFFSET(addr) 0u
+// Android/Linux: page granularity can be 4 KB or 16 KB, so the 0xE0000000
+// skew is decided by the runtime at startup (zero on 4 KB-page hosts).
+namespace rex::memory {
+extern uint32_t g_guest_phys_host_offset;
+}  // namespace rex::memory
+#define REX_PHYS_HOST_OFFSET(addr) \
+  (((u32)(addr) >= 0xE0000000u) ? rex::memory::g_guest_phys_host_offset : 0u)
 #endif
+
+//=============================================================================
+// PPC Memory Ordering Barriers
+//=============================================================================
+// PowerPC is weakly ordered. x86-TSO tolerates emitting nothing for these
+// barriers, but ARM64 (and any other weakly-ordered host) needs real fences
+// for inter-thread visibility - guest producer/consumer code relies on them.
+#define REX_SYNC_FENCE() std::atomic_thread_fence(std::memory_order_seq_cst)
+#define REX_LWSYNC_FENCE() std::atomic_thread_fence(std::memory_order_acq_rel)
+#define REX_EIEIO_FENCE() std::atomic_thread_fence(std::memory_order_release)
 
 #define REX_RAW_ADDR(x) (base + (u32)(x) + REX_PHYS_HOST_OFFSET(x))
 

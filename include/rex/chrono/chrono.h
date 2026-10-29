@@ -116,8 +116,9 @@ using XSystemClock = detail::NtSystemClock<detail::Domain::Guest>;
 
 namespace std::chrono {
 
-#ifdef __APPLE__
-// Apple libc++ does not expose clock_time_conversion or clock_cast.
+#if defined(__APPLE__) || (defined(_LIBCPP_VERSION) && _LIBCPP_VERSION < 200000)
+// Apple libc++ (and Android NDK libc++ up to r27 / LLVM 19) do not expose
+// clock_time_conversion or clock_cast.
 template <class, class>
 struct clock_time_conversion {};
 

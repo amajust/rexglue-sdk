@@ -35,9 +35,11 @@
 #include <SDL3/SDL_metal.h>
 
 #include <rex/ui/surface_mac.h>
-#else
+#elif REX_PLATFORM_GNU_LINUX
 #include <X11/Xlib-xcb.h>
 #include <rex/ui/surface_gnulinux.h>
+#elif REX_PLATFORM_ANDROID
+#include <rex/ui/surface_android.h>
 #endif
 
 namespace rex::ui {
@@ -149,6 +151,11 @@ bool WindowSDL::OpenImpl() {
     REXLOG_ERROR("SDL_CreateWindow failed: {}", SDL_GetError());
     return false;
   }
+#if REX_PLATFORM_ANDROID
+  // On Android the window is backed by the activity's SurfaceView; make it
+  // immersive fullscreen so the game renders edge-to-edge without system bars.
+  SDL_SetWindowFullscreen(sdl_window_, true);
+#endif
   sdl_window_id_ = SDL_GetWindowID(sdl_window_);
   sdl_app_context().RegisterWindow(sdl_window_id_, this);
 
@@ -398,7 +405,19 @@ std::unique_ptr<Surface> WindowSDL::CreateSurfaceImpl(Surface::TypeFlags allowed
       SDL_Metal_DestroyView(metal_view);
     }
   }
-#else
+#elif REX_PLATFORM_ANDROID
+  if (allowed_types & Surface::kTypeFlag_AndroidNativeWindow) {
+    SDL_PropertiesID props = SDL_GetWindowProperties(sdl_window_);
+    // NOTE: this SDL3 revision renamed the wiki's
+    // SDL_PROP_WINDOW_ANDROID_NATIVE_WINDOW_POINTER to
+    // SDL_PROP_WINDOW_ANDROID_WINDOW_POINTER ("SDL.window.android.window").
+    auto* native_window = static_cast<ANativeWindow*>(SDL_GetPointerProperty(
+        props, SDL_PROP_WINDOW_ANDROID_WINDOW_POINTER, nullptr));
+    if (native_window) {
+      return std::make_unique<AndroidNativeWindowSurface>(native_window);
+    }
+  }
+#elif REX_PLATFORM_GNU_LINUX
   SDL_PropertiesID props = SDL_GetWindowProperties(sdl_window_);
   if (allowed_types & Surface::kTypeFlag_WaylandSurface) {
     auto* wl_display_ptr = static_cast<struct wl_display*>(

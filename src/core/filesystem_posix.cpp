@@ -30,6 +30,10 @@
 #include <rex/platform/env.h>
 #include <rex/string.h>
 
+#if REX_PLATFORM_ANDROID
+#include <rex/main_android.h>
+#endif
+
 #include <dirent.h>
 #include <ftw.h>
 #include <libgen.h>
@@ -100,6 +104,15 @@ std::filesystem::path GetExecutablePath() {
 }
 
 std::filesystem::path GetExecutableFolder() {
+#if REX_PLATFORM_ANDROID
+  // /proc/self/exe resolves to Android's app_process, not the app's library
+  // directory. The app glue hands us ApplicationInfo.nativeLibraryDir, which
+  // is where librexgpu-xenos.so and friends are packaged.
+  const std::filesystem::path& lib_dir = GetAndroidNativeLibraryDir();
+  if (!lib_dir.empty()) {
+    return lib_dir;
+  }
+#endif
   return GetExecutablePath().parent_path();
 }
 

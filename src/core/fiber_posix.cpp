@@ -23,6 +23,20 @@
 
 #include <cassert>
 
+#if REX_PLATFORM_ANDROID
+// Bionic ships the ucontext_t/mcontext_t types in <ucontext.h> but none of
+// the swapcontext API prototypes (deliberately omitted upstream). The
+// implementation lives in ucontext_android.cpp (aarch64 assembly); declare
+// the prototypes here so this translation unit compiles and links to it.
+// Signatures mirror glibc's <ucontext.h> (the de-facto reference API).
+extern "C" {
+int getcontext(ucontext_t* ucp);
+void makecontext(ucontext_t* ucp, void (*func)(), int argc, ...);
+int setcontext(const ucontext_t* ucp);
+int swapcontext(ucontext_t* oucp, const ucontext_t* ucp);
+}
+#endif
+
 namespace rex::thread {
 
 thread_local Fiber* Fiber::tls_current_ = nullptr;

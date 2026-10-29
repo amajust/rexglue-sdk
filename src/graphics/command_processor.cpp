@@ -214,13 +214,16 @@ void CommandProcessor::WorkerThreadMain() {
     if (write_ptr_index == 0xBAADF00D || read_ptr_index_ == write_ptr_index) {
       SCOPE_profile_cpu_i("gpu", "rex::graphics::CommandProcessor::Stall");
       // We've run out of commands to execute.
-      // We spin here waiting for new ones, as the overhead of waiting on our
-      // event is too high.
+      // We spin briefly here waiting for new ones, as the overhead of waiting
+      // on our event is not free either - but on mobile SoCs (2-4 big cores
+      // shared with the whole guest) a long sched_yield spin steals a big
+      // core from the game thread while the ring stays empty, so fall back to
+      // event waits quickly.
       PrepareForWait();
       uint32_t loop_count = 0;
       do {
         // If we spin around too much, revert to a "low-power" state.
-        if (loop_count > 500) {
+        if (loop_count > 64) {
           const int wait_time_ms = 5;
           rex::thread::Wait(write_ptr_index_event_.get(), true,
                             std::chrono::milliseconds(wait_time_ms));
