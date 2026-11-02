@@ -191,7 +191,7 @@ VkPipeline CreateComputePipeline(const VulkanDevice* const vulkan_device,
   pipeline_create_info.basePipelineHandle = VK_NULL_HANDLE;
   pipeline_create_info.basePipelineIndex = -1;
   VkPipeline pipeline;
-  if (vulkan_device->functions().vkCreateComputePipelines(vulkan_device->device(), VK_NULL_HANDLE,
+  if (vulkan_device->functions().vkCreateComputePipelines(vulkan_device->device(), vulkan_device->pipeline_cache(),
                                                           1, &pipeline_create_info, nullptr,
                                                           &pipeline) != VK_SUCCESS) {
     return VK_NULL_HANDLE;

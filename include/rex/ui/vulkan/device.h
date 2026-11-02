@@ -205,6 +205,14 @@ class VulkanDevice {
 
   VkDevice device() const { return device_; }
 
+  // Persistent pipeline cache (compiled shader/pipeline blobs). Shared by all
+  // pipeline creation sites; saved on shutdown so the next run starts warm.
+  VkPipelineCache pipeline_cache() const { return pipeline_cache_; }
+
+  // Dumps the pipeline cache blob to disk (called periodically; the app may
+  // hard-exit without running destructors).
+  void SavePipelineCache() const;
+
   struct Functions {
 #define XE_UI_VULKAN_FUNCTION(name) PFN_##name name = nullptr;
 #define XE_UI_VULKAN_FUNCTION_PROMOTED(extension_name, core_name) \
@@ -293,6 +301,7 @@ class VulkanDevice {
 
   const VulkanInstance* vulkan_instance_ = nullptr;
   VkPhysicalDevice physical_device_ = nullptr;
+  VkPipelineCache pipeline_cache_ = VK_NULL_HANDLE;
 
   Properties properties_;
   Extensions extensions_;

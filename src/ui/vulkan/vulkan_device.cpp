@@ -10,6 +10,10 @@
  */
 
 #include <algorithm>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <cstring>
 #include <string>
 #include <unordered_map>
@@ -849,11 +853,91 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
     }
   }
 
+  // Persistent pipeline cache: load the blob saved by a previous run so
+  // shaders are not recompiled from scratch (the main source of the stutter
+  // seen on phones while a new area streams in shaders).
+  {
+    std::vector<uint8_t> cache_data;
+    std::filesystem::path cache_path;
+    {
+      // user_data_root is set by the app (writable on every platform, and it
+      // is where the phone keeps its save/profile data too).
+      std::string root = rex::cvar::GetFlagByName("user_data_root");
+      if (root.empty()) {
+        if (const char* home = std::getenv("HOME")) root = home;
+      }
+      if (!root.empty()) {
+        cache_path = std::filesystem::path(root) / "cache" / "pipeline_cache.bin";
+        std::error_code ec;
+        std::filesystem::create_directories(cache_path.parent_path(), ec);
+        if (std::ifstream in(cache_path, std::ios::binary); in) {
+          cache_data.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+        }
+      }
+    }
+    VkPipelineCacheCreateInfo cache_info{VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO};
+    cache_info.initialDataSize = cache_data.size();
+    cache_info.pInitialData = cache_data.empty() ? nullptr : cache_data.data();
+    const VkResult cache_result =
+        dfn.vkCreatePipelineCache(device->device_, &cache_info, nullptr, &device->pipeline_cache_);
+    if (cache_result == VK_SUCCESS) {
+      REXLOG_INFO("Vulkan pipeline cache: {} bytes loaded from {}", cache_data.size(),
+                  cache_path.string());
+    } else {
+      REXLOG_WARN("Vulkan pipeline cache could not be created");
+      device->pipeline_cache_ = VK_NULL_HANDLE;
+    }
+  }
+
   return device;
+}
+
+void VulkanDevice::SavePipelineCache() const {
+  if (!device_ || pipeline_cache_ == VK_NULL_HANDLE) return;
+  const Functions& dfn = functions_;
+  size_t cache_size = 0;
+  dfn.vkGetPipelineCacheData(device_, pipeline_cache_, &cache_size, nullptr);
+  if (!cache_size) return;
+  std::vector<uint8_t> blob(cache_size);
+  if (dfn.vkGetPipelineCacheData(device_, pipeline_cache_, &cache_size, blob.data()) != VK_SUCCESS) {
+    return;
+  }
+  std::string root = rex::cvar::GetFlagByName("user_data_root");
+  if (root.empty()) {
+    if (const char* home = std::getenv("HOME")) root = home;
+  }
+  if (root.empty()) return;
+  const auto path = std::filesystem::path(root) / "cache" / "pipeline_cache.bin";
+  std::ofstream out(path, std::ios::binary | std::ios::trunc);
+  out.write(reinterpret_cast<const char*>(blob.data()), std::streamsize(cache_size));
+  REXLOG_INFO("Vulkan pipeline cache: {} bytes saved to {}", cache_size, path.string());
 }
 
 VulkanDevice::~VulkanDevice() {
   if (device_) {
+    if (pipeline_cache_ != VK_NULL_HANDLE) {
+      const Functions& dfn = functions_;
+      size_t cache_size = 0;
+      dfn.vkGetPipelineCacheData(device_, pipeline_cache_, &cache_size, nullptr);
+      if (cache_size) {
+        std::vector<uint8_t> blob(cache_size);
+        if (dfn.vkGetPipelineCacheData(device_, pipeline_cache_, &cache_size, blob.data()) ==
+            VK_SUCCESS) {
+          std::string root = rex::cvar::GetFlagByName("user_data_root");
+          if (root.empty()) {
+            if (const char* home = std::getenv("HOME")) root = home;
+          }
+          if (!root.empty()) {
+            const auto path = std::filesystem::path(root) / "cache" / "pipeline_cache.bin";
+            std::ofstream out(path, std::ios::binary | std::ios::trunc);
+            out.write(reinterpret_cast<const char*>(blob.data()), std::streamsize(cache_size));
+            REXLOG_INFO("Vulkan pipeline cache: {} bytes saved to {}", cache_size, path.string());
+          }
+        }
+      }
+      dfn.vkDestroyPipelineCache(device_, pipeline_cache_, nullptr);
+      pipeline_cache_ = VK_NULL_HANDLE;
+    }
     vulkan_instance_->functions().vkDestroyDevice(device_, nullptr);
   }
 }

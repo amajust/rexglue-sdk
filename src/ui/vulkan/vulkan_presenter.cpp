@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cmath>
@@ -2242,6 +2243,36 @@ Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(bool execute_ui_draw
         vulkan_device_->AcquireQueue(paint_context_.present_queue_family, 0);
     present_result = dfn.vkQueuePresentKHR(queue_acquisition.queue(), &present_info);
   }
+  // FPS + frame-time percentiles (2 s window). Averages hide stutter, so the
+  // p50/p99 numbers are what matter for judging "smoothness".
+  {
+    static std::chrono::steady_clock::time_point last = std::chrono::steady_clock::now();
+    static std::chrono::steady_clock::time_point prev_frame = last;
+    static std::vector<float> frame_ms;
+    const auto now = std::chrono::steady_clock::now();
+    frame_ms.push_back(std::chrono::duration<float, std::milli>(now - prev_frame).count());
+    prev_frame = now;
+    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - last).count();
+    if (ms >= 2000) {
+      std::vector<float> sorted = frame_ms;
+      std::sort(sorted.begin(), sorted.end());
+      const float p50 = sorted.empty() ? 0.0f : sorted[sorted.size() / 2];
+      const float p99 = sorted.empty() ? 0.0f : sorted[size_t(sorted.size() * 0.99)];
+      float sum = 0.0f;
+      for (float v : frame_ms) sum += v;
+      const float avg = frame_ms.empty() ? 0.0f : sum / float(frame_ms.size());
+      REXLOG_INFO("FPS: {:.1f} frames={} avg={:.1f}ms p50={:.1f}ms p99={:.1f}ms",
+                  frame_ms.size() * 1000.0 / double(ms), frame_ms.size(), avg, p50, p99);
+      frame_ms.clear();
+      last = now;
+      // Flush the pipeline cache periodically: the app may hard-exit without
+      // running destructors, and this is what keeps later runs stutter-free.
+      static int windows = 0;
+      if (++windows % 15 == 0) {
+        vulkan_device_->SavePipelineCache();
+      }
+    }
+  }
   switch (present_result) {
     case VK_SUCCESS:
       return PaintResult::kPresented;
@@ -2650,7 +2681,7 @@ VkPipeline VulkanPresenter::CreateGuestOutputPaintPipeline(GuestOutputPaintEffec
   const VkDevice device = vulkan_device_->device();
 
   VkPipeline pipeline;
-  if (dfn.vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipeline_create_info, nullptr,
+  if (dfn.vkCreateGraphicsPipelines(device, vulkan_device_->pipeline_cache(), 1, &pipeline_create_info, nullptr,
                                     &pipeline) != VK_SUCCESS) {
     REXLOG_ERROR(
         "VulkanPresenter: Failed to create the guest output painting pipeline "

@@ -13,6 +13,7 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <chrono>
 #include <cstring>
 #include <iterator>
 #include <mutex>
@@ -1727,7 +1728,7 @@ bool VulkanCommandProcessor::SetupContext() {
   for (size_t i = 0; i < swap_apply_gamma_pipelines.size(); ++i) {
     swap_apply_gamma_pipeline_stages[1].module = swap_apply_gamma_pipeline_pixel_shaders[i];
     swap_apply_gamma_pipeline_create_results[i] = dfn.vkCreateGraphicsPipelines(
-        device, VK_NULL_HANDLE, 1, &swap_apply_gamma_pipeline_create_info, nullptr,
+        device, GetVulkanDevice()->pipeline_cache(), 1, &swap_apply_gamma_pipeline_create_info, nullptr,
         swap_apply_gamma_pipelines[i]);
   }
   if (!vulkan_device->properties().imageViewFormatSwizzle) {
@@ -2276,6 +2277,28 @@ void VulkanCommandProcessor::OnGammaRampPWLValueWritten() {
 
 void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr, uint32_t frontbuffer_width,
                                        uint32_t frontbuffer_height) {
+  // Guest (actual game) frame rate: one IssueSwap per presented guest frame.
+  // This is the honest number; the presenter counter also counts duplicates
+  // and UI frames.
+  {
+    static std::chrono::steady_clock::time_point last = std::chrono::steady_clock::now();
+    static int frames = 0;
+    static std::chrono::steady_clock::time_point prev = last;
+    static float sum_ms = 0.0f;
+    const auto now = std::chrono::steady_clock::now();
+    sum_ms += std::chrono::duration<float, std::milli>(now - prev).count();
+    prev = now;
+    ++frames;
+    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - last).count();
+    if (ms >= 2000) {
+      REXLOG_INFO("GUEST FPS: {:.1f} ({} swaps / {} ms, avg {:.1f} ms)",
+                  frames * 1000.0 / double(ms), frames, ms, sum_ms / float(frames));
+      frames = 0;
+      sum_ms = 0.0f;
+      last = now;
+    }
+  }
+
   SCOPE_profile_cpu_f("gpu");
   vertex_buffers_in_sync_[0] = 0;
   vertex_buffers_in_sync_[1] = 0;
