@@ -18,6 +18,7 @@
 #include <cstring>
 #include <memory>
 #include <utility>
+#include <thread>
 #include <vector>
 
 #include <rex/assert.h>
@@ -58,6 +59,11 @@ REXCVAR_DEFINE_BOOL(vulkan_allow_present_mode_mailbox, true, "UI/Vulkan",
 
 REXCVAR_DEFINE_BOOL(vulkan_allow_present_mode_fifo_relaxed, true, "UI/Vulkan",
                     "Allow FIFO relaxed present mode");
+
+REXCVAR_DEFINE_INT32(frame_rate_limit, 0, "GPU",
+                     "Cap presented frames per second (0 = unlimited). Lower values "
+                     "reduce heat and throttling on phones.")
+    .range(0, 240);
 
 namespace rex {
 namespace ui {
@@ -2265,6 +2271,18 @@ Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(bool execute_ui_draw
                   frame_ms.size() * 1000.0 / double(ms), frame_ms.size(), avg, p50, p99);
       frame_ms.clear();
       last = now;
+      // Frame cap: sleep the remainder of the budget so the emulated guest is
+      // paced too (less heat, steadier frame times). 0 = uncapped.
+      if (const int32_t limit = REXCVAR_GET(frame_rate_limit); limit > 0) {
+        static std::chrono::steady_clock::time_point last_present =
+            std::chrono::steady_clock::now();
+        const auto budget = std::chrono::microseconds(1000000 / limit);
+        const auto spent = std::chrono::steady_clock::now() - last_present;
+        if (spent < budget) {
+          std::this_thread::sleep_for(budget - spent);
+        }
+        last_present = std::chrono::steady_clock::now();
+      }
       // Flush the pipeline cache periodically: the app may hard-exit without
       // running destructors, and this is what keeps later runs stutter-free.
       static int windows = 0;
